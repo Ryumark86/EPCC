@@ -1,0 +1,18 @@
+{
+  "name": "Inspección de Equipos EPCC - SITOC",
+  "short_name": "SITOC EPCC",
+  "description": "Formato preoperacional offline para inspección de seguridad en alturas.",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#0d2b4e",
+  "theme_color": "#0d2b4e",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/1162/1162258.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
