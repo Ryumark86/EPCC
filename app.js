@@ -428,7 +428,7 @@
 
     function getFirmaTecData(tecUid) {
         var obj = canvasesTec[tecUid];
-        return obj ? obj.canvas.toDataURL() : null;
+        return obj ? obj.canvas.toDataURL('image/jpeg', 0.85) : null;
     }
 
     function capturarFotoTecnico(input, tecUid) {
@@ -718,7 +718,7 @@
             coordTSA: formState.coordTSA,
             tecnicos: tecnicosData,
             observaciones: obs,
-            firma: canvas.toDataURL(),
+            firma: canvas.toDataURL('image/jpeg', 0.85),
             aprobado: !tieneDefectosGlobal
         };
 
@@ -726,21 +726,24 @@
         regs.unshift(registro);
         localStorage.setItem(CONFIG.HISTORY_KEY, JSON.stringify(regs));
 
-        var nombreArchivo = 'EPCC_' + sitio.replace(/[/\\?%*:|"<> ]/g, '_') + '_' + fecha + '.html';
+        var nomBase = 'EPCC_' + sitio.replace(/[/\\?%*:|"<> ]/g, '_') + '_' + fecha;
 
-        var htmlReporte = generarReporteHtml(registro);
-        var blob = new Blob([htmlReporte], { type: 'text/html;charset=utf-8' });
-        var url = URL.createObjectURL(blob);
+        showToast('\u2705 Guardando \u2013 Generando PDF...', 'success');
+
+        var pdfBytes = generarPDF(registro);
+        var pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+        var pdfUrl = URL.createObjectURL(pdfBlob);
         var a = document.createElement('a');
-        a.href = url;
-        a.download = nombreArchivo;
+        a.href = pdfUrl;
+        a.download = nomBase + '.pdf';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
 
-        showToast('\u2705 Inspecci\u00f3n guardada \u2013 Enviando reporte...', 'success');
-        enviarTelegram(registro.id);
+        showToast('\u2709\ufe0f Enviando PDF por Telegram...', 'info');
+        enviarPDFTelegram(pdfBlob, nomBase, registro);
+
+        setTimeout(function () { URL.revokeObjectURL(pdfUrl); }, 10000);
         resetFormularioUI();
         showScreen('historial');
     }
@@ -984,7 +987,13 @@
         btnTel.className = 'btn btn-telegram';
         btnTel.style = "background:#0088cc;color:white;margin-top:8px;box-shadow:0 3px 10px rgba(0,136,204,.3);";
         btnTel.innerHTML = '\u2709\ufe0f Enviar Reporte por Telegram';
-        btnTel.onclick = function () { enviarTelegram(r.id); };
+        btnTel.onclick = function () {
+            showToast('\ud83d\udcc4 Generando PDF...', 'info');
+            var pdfBytes = generarPDF(r);
+            var pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+            var nomBase = 'EPCC_' + (r.sitio || 'SinSitio').replace(/[/\\?%*:|"<> ]/g, '_') + '_' + r.fecha;
+            enviarPDFTelegram(pdfBlob, nomBase, r);
+        };
         pd.insertBefore(btnTel, $('btn-eliminar-reg'));
 
         showScreen('detalle');
@@ -1138,6 +1147,376 @@
         showToast('\ud83d\udce5 Historial descargado \u2713', 'success');
     }
 
+    function base64ToBytes(b64) {
+        var raw = atob(b64.indexOf(',') >= 0 ? b64.split(',')[1] : b64);
+        var b = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) b[i] = raw.charCodeAt(i);
+        return b;
+    }
+
+    function jpgSize(b64) {
+        var bytes = base64ToBytes(b64);
+        if (bytes[0] !== 0xFF || bytes[1] !== 0xD8) return null;
+        var i = 2;
+        while (i < bytes.length) {
+            if (bytes[i] !== 0xFF) return null;
+            var marker = bytes[i+1];
+            if (marker === 0xC0 || marker === 0xC1 || marker === 0xC2) {
+                var h = (bytes[i+5] << 8) + bytes[i+6];
+                var w = (bytes[i+7] << 8) + bytes[i+8];
+                return { w: w, h: h };
+            }
+            var segLen = (bytes[i+2] << 8) + bytes[i+3];
+            i += 2 + segLen;
+        }
+        return null;
+    }
+
+    function concatBytes(list) {
+        var total = 0;
+        for (var i = 0; i < list.length; i++) total += list[i].length;
+        var r = new Uint8Array(total);
+        var off = 0;
+        for (var i = 0; i < list.length; i++) { r.set(list[i], off); off += list[i].length; }
+        return r;
+    }
+
+    function escPdf(t) {
+        if (!t) t = '';
+        var r = '';
+        for (var i = 0; i < t.length; i++) {
+            var c = t.charCodeAt(i);
+            if (c === 0x28 || c === 0x29 || c === 0x5C) { r += '\\' + String.fromCharCode(c); }
+            else if (c < 32) { r += '\\' + c.toString(8).padStart(3, '0'); }
+            else if (c < 128) { r += String.fromCharCode(c); }
+            else {
+                var m = { 0xd1:'\\335',0xf1:'\\361',0xc1:'\\301',0xe1:'\\341',0xc9:'\\311',0xe9:'\\351',
+                          0xcd:'\\315',0xed:'\\355',0xd3:'\\323',0xf3:'\\363',0xda:'\\332',0xfa:'\\372',
+                          0xdc:'\\334',0xfc:'\\374',0xbf:'\\277',0xa1:'\\241',0xb0:'\\260',0xaa:'\\252',
+                          0xba:'\\272',0xac:'\\254',0xa9:'\\251',0xae:'\\256',0xab:'\\253',0xbb:'\\273' };
+                r += m[c] || '?';
+            }
+        }
+        return r;
+    }
+
+    function generarPDF(r) {
+        var PAGE_W = 595, PAGE_H = 842;
+        var ML = 45, MR = 45, MT = 50, MB = 50;
+        var CW = PAGE_W - ML - MR;
+        var LH = 14;
+
+        var lines = [];
+
+        function addLine(text, opts) {
+            opts = opts || {};
+            lines.push({ text: text || '', size: opts.size || 10, bold: opts.bold || false, indent: opts.indent || 0, gap: opts.gap || 0, pageBreak: opts.pageBreak || false });
+        }
+
+        function addImageLine(b64, caption) {
+            var info = jpgSize(b64);
+            if (!info) { addLine('[Imagen no disponible]', { size: 9 }); return; }
+            var maxW = CW * 0.7;
+            var maxH = 180;
+            var scale = Math.min(maxW / info.w, maxH / info.h, 1);
+            var iw = Math.round(info.w * scale);
+            var ih = Math.round(info.h * scale);
+            lines.push({ type: 'image', b64: b64, w: iw, h: ih, caption: caption || '' });
+        }
+
+        addLine('INSPECCI\u00d3N DE EQUIPOS DE PROTECCI\u00d3N CONTRA CA\u00cdDAS', { size: 15, bold: true, gap: 4 });
+        addLine('SITOC \u00b7 Res. 4272/2021 / ANSI Z359 \u00b7 FR-SST-003 Ver. 05', { size: 9, gap: 6 });
+        addLine('', { size: 4, gap: 0 });
+        addLine('\u2500' .repeat(80), { size: 8, gap: 4 });
+
+        var est = r.aprobado ? 'CONFORME (Buen estado global)' : 'NO CONFORME (Se detectaron fallas cr\u00edticas)';
+        addLine('RESUMEN DE AUDITOR\u00cdA DE CAMPO', { size: 11, bold: true, gap: 6 });
+        addLine('Estado: ' + est, { size: 10, gap: 2 });
+        addLine('Inspector: ' + (r.inspector || '\u2014'), { size: 10 });
+        addLine('C\u00e9dula: ' + (r.cedula || '\u2014'), { size: 10 });
+        addLine('Tel\u00e9fono: ' + (r.telefono || '\u2014'), { size: 10 });
+        addLine('Sitio: ' + (r.sitio || '\u2014'), { size: 10 });
+        addLine('Fecha: ' + (r.fecha || '\u2014'), { size: 10 });
+        addLine('Coord. TSA: ' + (r.coordTSA ? 'S\u00cd' : 'NO'), { size: 10, gap: 4 });
+        if (r.observaciones) addLine('Obs: ' + r.observaciones, { size: 9, gap: 2 });
+        addLine('', { size: 4, gap: 0 });
+
+        if (r.tecnicos) {
+            r.tecnicos.forEach(function (tec, ti) {
+                addLine('', { size: 4, gap: 0 });
+                addLine('\u2500'.repeat(80), { size: 8, gap: 4 });
+                addLine('T\u00c9CNICO #' + (ti + 1) + ': ' + (tec.nombre || ''), { size: 11, bold: true, gap: 4 });
+                addLine('C\u00e9dula: ' + (tec.cedula || '\u2014') + '  |  Tel: ' + (tec.telefono || '\u2014'), { size: 9, gap: 6 });
+
+                var eqs = (tec.equipos || []).filter(function (e) { return !e.noAplica; });
+                eqs.forEach(function (eq, ei) {
+                    addLine('  Equipo #' + (ei + 1) + ' \u2014 ' + (eq.nombre || 'Sin nombre'), { size: 10, bold: true, indent: 5, gap: 2 });
+                    addLine('    Marca: ' + (eq.marca || '\u2014') + '  |  Serial: ' + (eq.serial || '\u2014'), { size: 9, indent: 10 });
+                    addLine('    Lote: ' + (eq.lote || '\u2014') + '  |  F.Fab: ' + (eq.fecha || '\u2014'), { size: 9, indent: 10, gap: 2 });
+                    if (eq.caracts) {
+                        Object.keys(eq.caracts).forEach(function (c) {
+                            var v = eq.caracts[c];
+                            addLine('    ' + c + ': ' + v, { size: 9, indent: 10 });
+                        });
+                    }
+                    addLine('', { size: 2, gap: 0 });
+                });
+
+                var defectos = [];
+                SECCIONES_MAL_EXCEL.forEach(function (g) {
+                    g.items.forEach(function (item, ii) {
+                        if (tec.malEstado && tec.malEstado[g.key + '_' + ii]) {
+                            defectos.push(g.titulo.split(' ')[1] + ': ' + item);
+                        }
+                    });
+                });
+                if (defectos.length > 0) {
+                    addLine('  DEFECTOS ENCONTRADOS:', { size: 10, bold: true, indent: 5, gap: 2 });
+                    defectos.forEach(function (d) { addLine('    \u2022 ' + d, { size: 9, indent: 10 }); });
+                } else if (eqs.length > 0) {
+                    addLine('  \u2713 Sin defectos', { size: 9, indent: 5, gap: 2 });
+                }
+            });
+        }
+
+        addLine('', { size: 4, gap: 0 });
+        addLine('\u2500'.repeat(80), { size: 8, gap: 6 });
+
+        // Collect images (photos + signatures) for separate image pages
+        var images = [];
+
+        if (r.tecnicos) {
+            r.tecnicos.forEach(function (tec, ti) {
+                if (tec.fotos && tec.fotos.length > 0) {
+                    tec.fotos.forEach(function (b64) {
+                        images.push({ b64: b64, caption: 'T\u00e9cnico #' + (ti + 1) + ' - ' + tec.nombre + ' (foto)' });
+                    });
+                }
+                if (tec.firma) {
+                    images.push({ b64: tec.firma, caption: 'Firma: ' + tec.nombre });
+                }
+            });
+        }
+
+        if (r.firma) {
+            images.push({ b64: r.firma, caption: 'Firma del Inspector: ' + (r.inspector || '') });
+        }
+
+        // Remove duplicate images (same base64 string)
+        var seen = {};
+        images = images.filter(function (img) {
+            var key = img.b64.substring(0, 100);
+            if (seen[key]) return false;
+            seen[key] = true;
+            return true;
+        });
+
+        // --- Build PDF objects ---
+        var objs = [];
+        var objStreams = []; // { num: int, data: Uint8Array }
+        var objStrings = []; // { num: int, data: string }
+        var nextNum = 0;
+        function newObj(isStream) {
+            nextNum++;
+            var entry = { num: nextNum, offset: 0, gen: 0 };
+            objs.push(entry);
+            if (isStream) objStreams.push(entry);
+            else objStrings.push(entry);
+            return entry;
+        }
+
+        // --- Fonts ---
+        var fHelv = newObj(false);
+        fHelv.text = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+        var fHelvB = newObj(false);
+        fHelvB.text = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>';
+
+        // --- Image XObjects ---
+        var imgXObjs = [];
+        images.forEach(function (img) {
+            var bytes = base64ToBytes(img.b64);
+            var info = jpgSize(img.b64);
+            if (!info) return;
+            var entry = newObj(true);
+            entry.imgBytes = bytes;
+            entry.imgW = info.w;
+            entry.imgH = info.h;
+            entry.caption = img.caption;
+            entry.text = '<< /Type /XObject /Subtype /Image /Width ' + info.w + ' /Height ' + info.h +
+                        ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + bytes.length + ' >>';
+            imgXObjs.push(entry);
+        });
+
+        // --- Build pages ---
+        // Each page: text content + optionally some images at the bottom
+        // For simplicity: one page for text, then separate pages for images (4 per page)
+
+        // Calculate how many text pages needed
+        var linesPerPage = 56; // approx
+        var textPages = Math.max(1, Math.ceil(lines.length / linesPerPage));
+
+        var allPages = [];
+
+        // Text pages
+        for (var tp = 0; tp < textPages; tp++) {
+            var start = tp * linesPerPage;
+            var end = Math.min(start + linesPerPage, lines.length);
+            var pageLines = lines.slice(start, end);
+
+            var content = '';
+            var y = PAGE_H - MT - 15;
+            for (var li = 0; li < pageLines.length; li++) {
+                var ln = pageLines[li];
+                var lh = Math.max(10, (ln.size || 10) + 4);
+                y -= lh;
+                if (y < MB + 20) { y = PAGE_H - MT - 15; }
+                if (ln.type === 'image') continue; // images go on separate pages
+                var indent = ML + (ln.indent || 0);
+                var font = ln.bold ? '/F2' : '/F1';
+                var sz = ln.size || 10;
+                content += 'BT ' + font + ' ' + sz + ' Tf ' + indent + ' ' + y + ' Td (' + escPdf(ln.text) + ') Tj ET\n';
+            }
+
+            content += 'BT /F1 8 Tf ' + ML + ' 30 Td (P\u00e1gina ' + (tp + 1) + ' de ' + textPages + ' | Generado: ' + new Date().toLocaleDateString('es-CO') + ') Tj ET\n';
+
+            var contentEntry = newObj(true);
+            contentEntry.text = '<< /Length ' + content.length + ' >>';
+            contentEntry.streamData = content;
+
+            var fonts = '<< /F1 ' + fHelv.num + ' 0 R /F2 ' + fHelvB.num + ' 0 R >>';
+            var pageEntry = newObj(false);
+            pageEntry.text = '<< /Type /Page /Parent 0 0 R /MediaBox [0 0 ' + PAGE_W + ' ' + PAGE_H + '] /Contents ' + contentEntry.num + ' 0 R /Resources << /Font ' + fonts + ' >> >>';
+            allPages.push(pageEntry);
+        }
+
+        // Image pages
+        if (imgXObjs.length > 0) {
+            var imgsPerPage = 4;
+            var imgPages = Math.ceil(imgXObjs.length / imgsPerPage);
+
+            for (var ip = 0; ip < imgPages; ip++) {
+                var startI = ip * imgsPerPage;
+                var endI = Math.min(startI + imgsPerPage, imgXObjs.length);
+                var pageImgs = imgXObjs.slice(startI, endI);
+
+                var content = '';
+                var cols = 2;
+                var rows = 2;
+                var cellW = CW / cols;
+                var cellH = (PAGE_H - MT - MB - 40) / rows;
+                var iy = PAGE_H - MT - 20;
+
+                content += 'BT /F1 10 Tf ' + ML + ' ' + (iy + 8) + ' Td (FOTOS Y FIRMAS - P\u00e1gina ' + (ip + 1) + ') Tj ET\n';
+                iy -= 20;
+
+                pageImgs.forEach(function (imgObj, idx) {
+                    var col = idx % cols;
+                    var row = Math.floor(idx / cols);
+                    var ix = ML + col * cellW + 10;
+                    var iy2 = iy - row * cellH + cellH - 20;
+
+                    var imgW = imgObj.imgW;
+                    var imgH = imgObj.imgH;
+                    var maxW = cellW - 20;
+                    var maxH = cellH - 35;
+                    var sc = Math.min(maxW / imgW, maxH / imgH, 1);
+                    var dw = Math.round(imgW * sc);
+                    var dh = Math.round(imgH * sc);
+
+                    content += 'q ' + dw + ' 0 0 ' + dh + ' ' + ix + ' ' + (iy2 - dh) + ' cm /Img' + imgObj.num + ' Do Q\n';
+                    content += 'BT /F1 7 Tf ' + ix + ' ' + (iy2 - dh - 12) + ' Td (' + escPdf(imgObj.caption.substring(0, 50)) + ') Tj ET\n';
+                });
+
+                var contentEntry = newObj(true);
+                contentEntry.text = '<< /Length ' + content.length + ' >>';
+                contentEntry.streamData = content;
+
+                var fonts = '<< /F1 ' + fHelv.num + ' 0 R >>';
+                var xobjs = '<< ';
+                pageImgs.forEach(function (imgObj) {
+                    xobjs += '/Img' + imgObj.num + ' ' + imgObj.num + ' 0 R ';
+                });
+                xobjs += '>>';
+                var resources = '<< /Font ' + fonts + ' /XObject ' + xobjs + ' >>';
+
+                var pageEntry = newObj(false);
+                pageEntry.text = '<< /Type /Page /Parent 0 0 R /MediaBox [0 0 ' + PAGE_W + ' ' + PAGE_H + '] /Contents ' + contentEntry.num + ' 0 R /Resources ' + resources + ' >>';
+                allPages.push(pageEntry);
+            }
+        }
+
+        // --- Build Pages tree ---
+        var pagesKids = allPages.map(function (p) { return p.num + ' 0 R'; }).join(' ');
+        var pagesEntry = newObj(false);
+        pagesEntry.text = '<< /Type /Pages /Kids [' + pagesKids + '] /Count ' + allPages.length + ' >>';
+
+        // Update page parents
+        allPages.forEach(function (p) {
+            p.text = p.text.replace('/Parent 0 0 R', '/Parent ' + pagesEntry.num + ' 0 R');
+        });
+
+        // --- Catalog ---
+        var catalogEntry = newObj(false);
+        catalogEntry.text = '<< /Type /Catalog /Pages ' + pagesEntry.num + ' 0 R >>';
+
+        // --- Serialize ---
+        function serialize() {
+            var chunks = [];
+            function add(s) {
+                if (typeof s === 'string') {
+                    var b = new Uint8Array(s.length);
+                    for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i) & 0xFF;
+                    chunks.push(b);
+                } else {
+                    chunks.push(s);
+                }
+            }
+
+            add('%PDF-1.4\n');
+
+            // Assign offsets as we write
+            var offsets = new Array(objs.length + 1).fill(0);
+
+            // Write objects in order
+            for (var i = 0; i < objs.length; i++) {
+                var o = objs[i];
+                offsets[o.num] = concatBytes(chunks).length;
+
+                add(o.num + ' ' + o.gen + ' obj\n');
+                if (o.text) add(o.text);
+                if (objStreams.indexOf(o) >= 0) {
+                    add('\nstream\n');
+                    if (o.streamData !== undefined) {
+                        add(o.streamData);
+                    } else if (o.imgBytes) {
+                        add(o.imgBytes);
+                    }
+                    add('\nendstream');
+                }
+                add('\nendobj\n');
+            }
+
+            var xrefOffset = concatBytes(chunks).length;
+            add('xref\n');
+            add('0 ' + (objs.length + 1) + '\n');
+            add('0000000000 65535 f \n');
+            for (var i = 1; i <= objs.length; i++) {
+                var s = '0000000000' + offsets[i];
+                add(s.slice(-10) + ' 00000 n \n');
+            }
+
+            add('trailer\n');
+            add('<< /Size ' + (objs.length + 1) + ' /Root ' + catalogEntry.num + ' 0 R >>\n');
+            add('startxref\n');
+            add(xrefOffset + '\n');
+            add('%%EOF');
+
+            return concatBytes(chunks);
+        }
+
+        return serialize();
+    }
+
     function generarReporteHtml(r) {
         var h = '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>EPCC - ' + escHtml(r.sitio) + ' - ' + r.fecha + '</title>';
         h += '<meta name="viewport" content="width=device-width,initial-scale=1">';
@@ -1260,57 +1639,24 @@
         return h;
     }
 
-    function enviarTelegram(id) {
-        var r = getRegs().find(function (reg) { return reg.id === id; });
-        if (!r) { showToast('Registro no encontrado', 'error'); return; }
+    function enviarPDFTelegram(pdfBlob, nomBase, r) {
+        var caption = '\ud83d\udfe2 *EPCC - ' + (r.sitio || 'Sin sitio') + '*\n';
+        caption += '\ud83d\udcc5 ' + r.fecha + ' | \ud83d\udc64 ' + (r.inspector || '') + '\n';
+        caption += '\ud83d\udccb ' + (r.aprobado ? '\u2705 CONFORME' : '\u26a0\ufe0f NO CONFORME');
+        if (r.observaciones) caption += '\n\ud83d\udcac ' + r.observaciones;
 
-        var totalTecnicos = r.tecnicos ? r.tecnicos.length : 0;
-        var totalEquipos = 0;
-        var equiposTexto = '';
-        if (r.tecnicos) {
-            r.tecnicos.forEach(function (tec, ti) {
-                var eqValidos = (tec.equipos || []).filter(function (e) { return !e.noAplica; });
-                totalEquipos += eqValidos.length;
-                equiposTexto += '\n\ud83d\udc64 T\u00e9cnico #' + (ti + 1) + ': ' + tec.nombre + '\n';
-                eqValidos.forEach(function (eq, ei) {
-                    equiposTexto += '  \ud83d\udd27 Eq #' + (ei + 1) + ' ' + (eq.nombre || '') + '\n';
-                    equiposTexto += '    Marca: ' + (eq.marca || '\u2014') + ' | Serial: ' + (eq.serial || '\u2014') + '\n';
-                    if (eq.caracts) {
-                        var todosSi = Object.keys(eq.caracts).every(function (k) { return eq.caracts[k] === 'SI'; });
-                        equiposTexto += '    Certificaci\u00f3n: ' + (todosSi ? '\u2705 Conforme' : '\u26a0\ufe0f No conforme') + '\n';
-                    }
-                });
-            });
-        } else if (r.equipos) {
-            totalEquipos = r.equipos.length;
-            equiposTexto = '\n  (formato legacy, ' + totalEquipos + ' equipos)';
-        }
+        var formData = new FormData();
+        formData.append('chat_id', TELEGRAM_CHAT_ID);
+        formData.append('document', pdfBlob, nomBase + '.pdf');
+        formData.append('caption', caption);
+        formData.append('parse_mode', 'Markdown');
 
-        var estadoGlobal = r.aprobado ? '\u2705 CONFORME' : '\u26a0\ufe0f NO CONFORME';
-        var msg = '\ud83d\udfe2 *INSPECCI\u00d3N EPCC - SITOC* \ud83d\udfe2\n';
-        msg += '\ud83d\udcc5 Fecha: ' + r.fecha + '\n';
-        msg += '\ud83d\udc64 Inspector: ' + r.inspector + '\n';
-        msg += '\ud83c\udfe2 Sitio: ' + (r.sitio || '\u2014') + '\n';
-        msg += '\ud83d\udccb Estado: ' + estadoGlobal + '\n';
-        msg += '\ud83d\udc65 T\u00e9cnicos: ' + totalTecnicos + ' | Equipos: ' + totalEquipos + '\n';
-        msg += equiposTexto;
-        msg += '\n\n' + (r.observaciones ? '\ud83d\udcac Obs: ' + r.observaciones : '');
-
-        var url = 'https://api.telegram.org/bot' + TELEGRAM_TOKEN + '/sendMessage';
-
-        showToast('\u2709\ufe0f Enviando reporte por Telegram...', 'info');
-
-        fetch(url, {
+        fetch('https://api.telegram.org/bot' + TELEGRAM_TOKEN + '/sendDocument', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                chat_id: TELEGRAM_CHAT_ID,
-                text: msg,
-                parse_mode: 'Markdown'
-            })
+            body: formData
         }).then(function (res) { return res.json(); }).then(function (data) {
             if (data.ok) {
-                showToast('\u2705 Reporte enviado por Telegram', 'success');
+                showToast('\u2705 PDF enviado por Telegram', 'success');
             } else {
                 showToast('\u274c Error Telegram: ' + (data.description || 'desconocido'), 'error');
             }
@@ -1340,6 +1686,6 @@
     window._deletePending = deletePending;
     window._viewPending = viewPending;
     window._descargarHistorial = descargarHistorial;
-    window._enviarTelegram = enviarTelegram;
+    window._enviarPDFTelegram = enviarPDFTelegram;
 
 })();
