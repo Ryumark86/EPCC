@@ -428,19 +428,37 @@
 
     function getFirmaTecData(tecUid) {
         var obj = canvasesTec[tecUid];
-        return obj ? canvasToJpeg(obj.canvas) : null;
+        if (!obj) return null;
+        var jpeg = canvasToJpeg(obj.canvas);
+        return jpeg;
     }
 
     function canvasToJpeg(cvs, quality) {
         quality = quality || 0.85;
-        var tmp = document.createElement('canvas');
-        tmp.width = cvs.width;
-        tmp.height = cvs.height;
-        var tc = tmp.getContext('2d');
-        tc.fillStyle = '#ffffff';
-        tc.fillRect(0, 0, tmp.width, tmp.height);
-        tc.drawImage(cvs, 0, 0);
-        return tmp.toDataURL('image/jpeg', quality);
+        if (!cvs || !cvs.width || !cvs.height) return null;
+        try {
+            var ctx = cvs.getContext('2d');
+            var src = ctx.getImageData(0, 0, cvs.width, cvs.height);
+            var d = src.data;
+            var tmp = document.createElement('canvas');
+            tmp.width = cvs.width;
+            tmp.height = cvs.height;
+            var tc = tmp.getContext('2d');
+            var dst = tc.createImageData(cvs.width, cvs.height);
+            var o = dst.data;
+            for (var i = 0; i < d.length; i += 4) {
+                if (d[i + 3] > 0) {
+                    o[i] = d[i]; o[i + 1] = d[i + 1]; o[i + 2] = d[i + 2]; o[i + 3] = 255;
+                } else {
+                    o[i] = 255; o[i + 1] = 255; o[i + 2] = 255; o[i + 3] = 255;
+                }
+            }
+            tc.putImageData(dst, 0, 0);
+            return tmp.toDataURL('image/jpeg', quality);
+        } catch (e) {
+            console.error('canvasToJpeg falló:', e);
+            return cvs.toDataURL('image/png');
+        }
     }
 
     function capturarFotoTecnico(input, tecUid) {
