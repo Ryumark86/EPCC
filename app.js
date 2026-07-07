@@ -1566,23 +1566,48 @@
     }
 
     function enviarPDFTelegram(pdfBlob, nomBase, r) {
-        var caption = '\ud83d\udfe2 *EPCC - ' + (r.sitio || 'Sin sitio') + '*\n';
-        caption += '\ud83d\udcc5 ' + r.fecha + ' | \ud83d\udc64 ' + (r.inspector || '') + '\n';
-        caption += '\ud83d\udccb ' + (r.aprobado ? '\u2705 CONFORME' : '\u26a0\ufe0f NO CONFORME');
+        var lines = [];
+        lines.push('\ud83d\udfe2 INSPECCI\u00d3N EPCC - SITOC \ud83d\udfe2');
+        lines.push('\ud83d\udcc5 Fecha: ' + (r.fecha || ''));
+        lines.push('\ud83d\udc64 Inspector: ' + (r.inspector || ''));
+        lines.push('\ud83c\udfe2 Sitio: ' + (r.sitio || ''));
+        lines.push('\ud83d\udccb Estado: ' + (r.aprobado ? '\u2705 CONFORME' : '\u274c NO CONFORME'));
+
+        var totalTec = (r.tecnicos || []).length;
+        var totalEq = 0;
+        r.tecnicos && r.tecnicos.forEach(function (tec, ti) {
+            var eqs = (tec.equipos || []).filter(function (e) { return !e.noAplica; });
+            totalEq += eqs.length;
+            lines.push('');
+            lines.push('\ud83d\udc64 T\u00e9cnico #' + (ti + 1) + ': ' + (tec.nombre || ''));
+            eqs.forEach(function (eq, ei) {
+                var eqConforme = true;
+                if (eq.caracts) {
+                    for (var k in eq.caracts) {
+                        if (eq.caracts[k] !== 'SI') { eqConforme = false; break; }
+                    }
+                }
+                lines.push('  \ud83d\udd27 Eq #' + (ei + 1) + ' ' + (eq.nombre || ''));
+                lines.push('    Marca: ' + (eq.marca || '') + ' | Serial: ' + (eq.serial || ''));
+                lines.push('    Certificaci\u00f3n: ' + (eqConforme ? '\u2705 Conforme' : '\u274c No Conforme'));
+            });
+        });
+        lines.splice(5, 0, '\ud83d\udc65 T\u00e9cnicos: ' + totalTec + ' | Equipos: ' + totalEq);
+
         if (r.observaciones) {
-            var obsText = '\n\ud83d\udcac ' + r.observaciones;
-            var maxCaptionLen = 1024;
-            if (caption.length + obsText.length > maxCaptionLen) {
-                obsText = obsText.substring(0, maxCaptionLen - caption.length - 3) + '...';
-            }
-            caption += obsText;
+            lines.push('');
+            lines.push('\ud83d\udcac Obs: ' + r.observaciones);
+        }
+
+        var caption = lines.join('\n');
+        if (caption.length > 1024) {
+            caption = caption.substring(0, 1021) + '...';
         }
 
         var formData = new FormData();
         formData.append('chat_id', TELEGRAM_CHAT_ID);
         formData.append('document', pdfBlob, nomBase + '.pdf');
         formData.append('caption', caption);
-        formData.append('parse_mode', 'Markdown');
 
         fetch('https://api.telegram.org/bot' + TELEGRAM_TOKEN + '/sendDocument', {
             method: 'POST',
