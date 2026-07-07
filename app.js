@@ -433,14 +433,14 @@
 
     function canvasToJpeg(cvs, quality) {
         quality = quality || 0.85;
-        var ctx = cvs.getContext('2d');
-        var imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, cvs.width, cvs.height);
-        ctx.drawImage(cvs, 0, 0);
-        var data = cvs.toDataURL('image/jpeg', quality);
-        ctx.putImageData(imgData, 0, 0);
-        return data;
+        var tmp = document.createElement('canvas');
+        tmp.width = cvs.width;
+        tmp.height = cvs.height;
+        var tc = tmp.getContext('2d');
+        tc.fillStyle = '#ffffff';
+        tc.fillRect(0, 0, tmp.width, tmp.height);
+        tc.drawImage(cvs, 0, 0);
+        return tmp.toDataURL('image/jpeg', quality);
     }
 
     function capturarFotoTecnico(input, tecUid) {
