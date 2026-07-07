@@ -1183,6 +1183,7 @@
 
     function escPdf(t) {
         if (!t) t = '';
+        t = t.replace(/\u2500/g, '-').replace(/\u2022/g, '\xb7').replace(/\u2713/g, '+');
         var r = '';
         for (var i = 0; i < t.length; i++) {
             var c = t.charCodeAt(i);
@@ -1193,7 +1194,7 @@
                 var m = { 0xd1:'\\335',0xf1:'\\361',0xc1:'\\301',0xe1:'\\341',0xc9:'\\311',0xe9:'\\351',
                           0xcd:'\\315',0xed:'\\355',0xd3:'\\323',0xf3:'\\363',0xda:'\\332',0xfa:'\\372',
                           0xdc:'\\334',0xfc:'\\374',0xbf:'\\277',0xa1:'\\241',0xb0:'\\260',0xaa:'\\252',
-                          0xba:'\\272',0xac:'\\254',0xa9:'\\251',0xae:'\\256',0xab:'\\253',0xbb:'\\273' };
+                          0xba:'\\272',0xac:'\\254',0xa9:'\\251',0xae:'\\256',0xab:'\\253',0xbb:'\\273',0xb7:'\\267' };
                 r += m[c] || '?';
             }
         }
@@ -1210,7 +1211,7 @@
 
         function addLine(text, opts) {
             opts = opts || {};
-            lines.push({ text: text || '', size: opts.size || 10, bold: opts.bold || false, indent: opts.indent || 0, gap: opts.gap || 0, pageBreak: opts.pageBreak || false });
+            lines.push({ text: text || '', size: opts.size || 10, bold: opts.bold || false, indent: opts.indent || 0, gap: opts.gap || 0, pageBreak: opts.pageBreak || false, color: opts.color || null });
         }
 
         function addImageLine(b64, caption) {
@@ -1230,8 +1231,9 @@
         addLine('\u2500' .repeat(80), { size: 8, gap: 4 });
 
         var est = r.aprobado ? 'CONFORME (Buen estado global)' : 'NO CONFORME (Se detectaron fallas cr\u00edticas)';
+        var estColor = r.aprobado ? '0 0.55 0 rg' : '0.8 0 0 rg';
         addLine('RESUMEN DE AUDITOR\u00cdA DE CAMPO', { size: 11, bold: true, gap: 6 });
-        addLine('Estado: ' + est, { size: 10, gap: 2 });
+        addLine('Estado: ' + est, { size: 10, gap: 2, color: estColor });
         addLine('Inspector: ' + (r.inspector || '\u2014'), { size: 10 });
         addLine('C\u00e9dula: ' + (r.cedula || '\u2014'), { size: 10 });
         addLine('Tel\u00e9fono: ' + (r.telefono || '\u2014'), { size: 10 });
@@ -1271,10 +1273,10 @@
                     });
                 });
                 if (defectos.length > 0) {
-                    addLine('  DEFECTOS ENCONTRADOS:', { size: 10, bold: true, indent: 5, gap: 2 });
-                    defectos.forEach(function (d) { addLine('    \u2022 ' + d, { size: 9, indent: 10 }); });
+                    addLine('  DEFECTOS ENCONTRADOS:', { size: 10, bold: true, indent: 5, gap: 2, color: '0.8 0 0 rg' });
+                    defectos.forEach(function (d) { addLine('    \u2022 ' + d, { size: 9, indent: 10, color: '0.8 0 0 rg' }); });
                 } else if (eqs.length > 0) {
-                    addLine('  \u2713 Sin defectos', { size: 9, indent: 5, gap: 2 });
+                    addLine('  \u2713 Sin defectos', { size: 9, indent: 5, gap: 2, color: '0 0.55 0 rg' });
                 }
             });
         }
@@ -1305,7 +1307,7 @@
         // Remove duplicate images (same base64 string)
         var seen = {};
         images = images.filter(function (img) {
-            var key = img.b64.substring(0, 100);
+            var key = img.b64;
             if (seen[key]) return false;
             seen[key] = true;
             return true;
@@ -1369,12 +1371,13 @@
                 var ln = pageLines[li];
                 var lh = Math.max(10, (ln.size || 10) + 4);
                 y -= lh;
-                if (y < MB + 20) { y = PAGE_H - MT - 15; }
                 if (ln.type === 'image') continue; // images go on separate pages
                 var indent = ML + (ln.indent || 0);
                 var font = ln.bold ? '/F2' : '/F1';
                 var sz = ln.size || 10;
+                if (ln.color) content += ln.color + ' ';
                 content += 'BT ' + font + ' ' + sz + ' Tf ' + indent + ' ' + y + ' Td (' + escPdf(ln.text) + ') Tj ET\n';
+                if (ln.color) content += '0 0 0 rg\n';
             }
 
             content += 'BT /F1 8 Tf ' + ML + ' 30 Td (P\u00e1gina ' + (tp + 1) + ' de ' + textPages + ' | Generado: ' + new Date().toLocaleDateString('es-CO') + ') Tj ET\n';
@@ -1517,133 +1520,18 @@
         return serialize();
     }
 
-    function generarReporteHtml(r) {
-        var h = '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>EPCC - ' + escHtml(r.sitio) + ' - ' + r.fecha + '</title>';
-        h += '<meta name="viewport" content="width=device-width,initial-scale=1">';
-        h += '<style>';
-        h += '*{box-sizing:border-box;margin:0;padding:0}';
-        h += 'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#fff;color:#1a2535;padding:20px;max-width:800px;margin:0 auto}';
-        h += 'h1{font-size:18px;color:#0d2b4e;text-align:center;margin-bottom:4px;text-transform:uppercase}';
-        h += 'h2{font-size:14px;color:#0d2b4e;margin-bottom:10px;border-bottom:2px solid #0d2b4e;padding-bottom:4px}';
-        h += '.sub{text-align:center;font-size:11px;color:#4a5568;margin-bottom:20px}';
-        h += '.sec{background:#f4f6f9;border-radius:8px;padding:12px;margin-bottom:14px;border:1px solid #c8d0dc}';
-        h += '.sec-title{font-size:12px;font-weight:700;color:#0d2b4e;margin-bottom:8px;text-transform:uppercase}';
-        h += '.row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #e8ecf1;font-size:12px}';
-        h += '.row span{color:#4a5568;font-weight:600;font-size:11px}';
-        h += '.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px}';
-        h += '.grid div span{display:block;font-size:10px;color:#4a5568}';
-        h += '.eq-box{background:#fff;border:1px solid #c8d0dc;border-radius:6px;padding:10px;margin-bottom:10px;font-size:12px}';
-        h += '.eq-box .name{font-weight:700;color:#1a3f6f;margin-bottom:4px}';
-        h += '.ok{color:#38a169;font-weight:700}';
-        h += '.warn{color:#e53e3e;font-weight:700}';
-        h += '.caracts{background:#fff;border:1px solid #e8ecf1;border-radius:6px;padding:6px;margin-top:6px;font-size:11px}';
-        h += '.firma-img{display:block;max-width:260px;height:auto;background:#fafbfc;border:1px solid #c8d0dc;border-radius:6px;margin:6px 0}';
-        h += '.photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px;margin-top:6px}';
-        h += '.photo-grid img{width:100%;height:auto;border:1px solid #c8d0dc;border-radius:4px}';
-        h += '.tag{background:#0d2b4e;color:#fff;padding:2px 8px;border-radius:4px;font-size:10px}';
-        h += '@media print{body{padding:0}.sec{break-inside:avoid}}';
-        h += '</style></head><body>';
-
-        h += '<h1>INSPECCI\u00d3N DE EQUIPOS DE PROTECCI\u00d3N CONTRA CA\u00cdDAS</h1>';
-        h += '<div class="sub">SITOC &middot; Res. 4272/2021 / ANSI Z359 &middot; FR-SST-003 Ver. 05</div>';
-
-        var estadoTexto = r.aprobado ? 'CONFORME (Buen estado global)' : 'NO CONFORME (Se detectaron fallas cr\u00edticas)';
-        var estadoColor = r.aprobado ? '#38a169' : '#e53e3e';
-
-        h += '<div class="sec">';
-        h += '  <div class="sec-title">Resumen de Auditor\u00eda de Campo</div>';
-        h += '  <div class="row"><span>Estado</span><strong style="color:' + estadoColor + '">' + estadoTexto + '</strong></div>';
-        h += '  <div class="row"><span>Inspector</span><strong>' + escHtml(r.inspector) + '</strong></div>';
-        h += '  <div class="row"><span>Fecha</span><strong>' + r.fecha + '</strong></div>';
-        h += '  <div class="row"><span>C\u00e9dula</span><strong>' + escHtml(r.cedula || '\u2014') + '</strong></div>';
-        h += '  <div class="row"><span>Tel\u00e9fono</span><strong>' + escHtml(r.telefono || '\u2014') + '</strong></div>';
-        h += '  <div class="row"><span>Sitio</span><strong>' + escHtml(r.sitio || '\u2014') + '</strong></div>';
-        h += '  <div class="row"><span>Coord. TSA</span><strong>' + (r.coordTSA ? 'S\u00cd' : 'NO') + '</strong></div>';
-        if (r.observaciones) h += '  <div class="row"><span>Observaciones</span><strong>' + escHtml(r.observaciones) + '</strong></div>';
-        h += '</div>';
-
-        if (r.tecnicos) {
-            r.tecnicos.forEach(function (tec, ti) {
-                h += '<div class="sec">';
-                h += '  <div class="sec-title">T\u00e9cnico #' + (ti + 1) + ': ' + escHtml(tec.nombre) + '</div>';
-                h += '  <div class="row"><span>C\u00e9dula</span><strong>' + escHtml(tec.cedula) + '</strong></div>';
-                h += '  <div class="row"><span>Tel\u00e9fono</span><strong>' + escHtml(tec.telefono) + '</strong></div>';
-
-                var eqs = (tec.equipos || []).filter(function (e) { return !e.noAplica; });
-                if (eqs.length > 0) {
-                    h += '  <div style="margin-top:8px"><strong style="font-size:11px;color:#0d2b4e">Equipos</strong></div>';
-                    eqs.forEach(function (eq, ei) {
-                        h += '  <div class="eq-box">';
-                        h += '    <div class="name">Eq #' + (ei + 1) + ' \u2014 ' + escHtml(eq.nombre || 'Sin nombre') + '</div>';
-                        h += '    <div class="grid">';
-                        h += '      <div><span>Marca</span>' + escHtml(eq.marca || '\u2014') + '</div>';
-                        h += '      <div><span>Serial</span>' + escHtml(eq.serial || '\u2014') + '</div>';
-                        h += '      <div><span>Lote</span>' + escHtml(eq.lote || '\u2014') + '</div>';
-                        h += '      <div><span>F.Fab</span>' + escHtml(eq.fecha || '\u2014') + '</div>';
-                        h += '    </div>';
-                        if (eq.caracts) {
-                            h += '    <div class="caracts">';
-                            Object.keys(eq.caracts).forEach(function (c) {
-                                var v = eq.caracts[c];
-                                h += '    <div class="row"><span>' + c + '</span><strong class="' + (v === 'SI' ? 'ok' : 'warn') + '">' + v + '</strong></div>';
-                            });
-                            h += '    </div>';
-                        }
-                        h += '  </div>';
-                    });
-                }
-
-                var defectos = [];
-                SECCIONES_MAL_EXCEL.forEach(function (g) {
-                    g.items.forEach(function (item, ii) {
-                        if (tec.malEstado && tec.malEstado[g.key + '_' + ii]) {
-                            defectos.push(g.titulo.split(' ')[1] + ': ' + item);
-                        }
-                    });
-                });
-                if (defectos.length > 0) {
-                    h += '  <div style="margin-top:8px;padding:6px;background:#fff;border-left:3px solid #e53e3e;border-radius:4px;font-size:11px">';
-                    h += '    <strong style="color:#e53e3e">Defectos:</strong>';
-                    defectos.forEach(function (d) { h += '<div style="color:#e53e3e">\u274c ' + d + '</div>'; });
-                    h += '  </div>';
-                } else if (eqs.length > 0) {
-                    h += '  <div style="margin-top:6px;font-size:12px;color:#38a169;font-weight:600">\u2713 Sin defectos</div>';
-                }
-
-                if (tec.fotos && tec.fotos.length > 0) {
-                    h += '  <div style="margin-top:8px"><strong style="font-size:11px;color:#0d2b4e">Fotos</strong>';
-                    h += '    <div class="photo-grid">';
-                    tec.fotos.forEach(function (b64) {
-                        h += '    <img src="' + b64 + '" alt="Foto">';
-                    });
-                    h += '    </div></div>';
-                }
-
-                if (tec.firma) {
-                    h += '  <div style="margin-top:8px"><strong style="font-size:11px;color:#0d2b4e">Firma del T\u00e9cnico</strong>';
-                    h += '  <img class="firma-img" src="' + tec.firma + '" alt="Firma"></div>';
-                }
-
-                h += '</div>';
-            });
-        }
-
-        if (r.firma) {
-            h += '<div class="sec">';
-            h += '  <div class="sec-title">Firma del Inspector</div>';
-            h += '  <img class="firma-img" src="' + r.firma + '" alt="Firma inspector">';
-            h += '</div>';
-        }
-
-        h += '</body></html>';
-        return h;
-    }
-
     function enviarPDFTelegram(pdfBlob, nomBase, r) {
         var caption = '\ud83d\udfe2 *EPCC - ' + (r.sitio || 'Sin sitio') + '*\n';
         caption += '\ud83d\udcc5 ' + r.fecha + ' | \ud83d\udc64 ' + (r.inspector || '') + '\n';
         caption += '\ud83d\udccb ' + (r.aprobado ? '\u2705 CONFORME' : '\u26a0\ufe0f NO CONFORME');
-        if (r.observaciones) caption += '\n\ud83d\udcac ' + r.observaciones;
+        if (r.observaciones) {
+            var obsText = '\n\ud83d\udcac ' + r.observaciones;
+            var maxCaptionLen = 1024;
+            if (caption.length + obsText.length > maxCaptionLen) {
+                obsText = obsText.substring(0, maxCaptionLen - caption.length - 3) + '...';
+            }
+            caption += obsText;
+        }
 
         var formData = new FormData();
         formData.append('chat_id', TELEGRAM_CHAT_ID);

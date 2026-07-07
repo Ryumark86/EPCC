@@ -2,7 +2,10 @@ const CACHE_NAME = 'sitoc-epcc-cache-v2';
 const ASSETS = [
   './',
   './index.html',
-  './manifest.json'
+  './manifest.json',
+  './app.js',
+  './styles.css',
+  './icon.svg'
 ];
 
 // Instalar el Service Worker y guardar los archivos en la caché interna
@@ -39,16 +42,30 @@ self.addEventListener('fetch', event => {
         return; // Esto permite que la petición salga a internet libremente
     }
     
-    // 2. Si el usuario busca index.html o la raíz offline
+    // 2. Si el usuario busca index.html o la raíz — Network First, fallback a caché
     if (event.request.mode === 'navigate') {
-        event.respondWith(caches.match('./index.html'));
+        event.respondWith(
+            fetch(event.request).catch(function () {
+                return caches.match('./index.html');
+            })
+        );
         return;
     }
 
-    // 3. Estrategia estándar para el resto de archivos (caché primero, luego red)
+    // 3. Estrategia Stale-While-Revalidate para assets estáticos
     event.respondWith(
-        caches.match(event.request).then(response => {
-            return response || fetch(event.request);
+        caches.match(event.request).then(function (cached) {
+            var fetchPromise = fetch(event.request).then(function (response) {
+                return caches.open(CACHE_NAME).then(function (cache) {
+                    if (event.request.url.startsWith(self.location.origin)) {
+                        cache.put(event.request, response.clone());
+                    }
+                    return response;
+                });
+            }).catch(function () {
+                return cached;
+            });
+            return cached || fetchPromise;
         })
     );
 });
