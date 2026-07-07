@@ -364,7 +364,7 @@
     function initCanvasFirmaTecnico(tecUid) {
         var cvs = $('firmaTec-' + tecUid);
         if (!cvs) return;
-        var c = cvs.getContext('2d');
+        var c = cvs.getContext('2d', { willReadFrequently: true });
         c.strokeStyle = '#0d2b4e';
         c.lineWidth = 2.5;
         c.lineCap = 'round';
@@ -552,7 +552,7 @@
     function initCanvasFirma() {
         canvas = $('firmaCanvas');
         if (!canvas) return;
-        ctx = canvas.getContext('2d');
+        ctx = canvas.getContext('2d', { willReadFrequently: true });
         ctx.strokeStyle = '#0d2b4e';
         ctx.lineWidth = 2.5;
         ctx.lineCap = 'round';
@@ -1341,9 +1341,9 @@
 
         // --- Fonts ---
         var fHelv = newObj(false);
-        fHelv.text = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+        fHelv.text = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';
         var fHelvB = newObj(false);
-        fHelvB.text = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>';
+        fHelvB.text = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
 
         // --- Image XObjects ---
         var imgXObjs = [];
