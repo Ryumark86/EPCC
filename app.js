@@ -428,7 +428,19 @@
 
     function getFirmaTecData(tecUid) {
         var obj = canvasesTec[tecUid];
-        return obj ? obj.canvas.toDataURL('image/jpeg', 0.85) : null;
+        return obj ? canvasToJpeg(obj.canvas) : null;
+    }
+
+    function canvasToJpeg(cvs, quality) {
+        quality = quality || 0.85;
+        var ctx = cvs.getContext('2d');
+        var imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, cvs.width, cvs.height);
+        ctx.drawImage(cvs, 0, 0);
+        var data = cvs.toDataURL('image/jpeg', quality);
+        ctx.putImageData(imgData, 0, 0);
+        return data;
     }
 
     function capturarFotoTecnico(input, tecUid) {
@@ -718,7 +730,7 @@
             coordTSA: formState.coordTSA,
             tecnicos: tecnicosData,
             observaciones: obs,
-            firma: canvas.toDataURL('image/jpeg', 0.85),
+            firma: canvasToJpeg(canvas),
             aprobado: !tieneDefectosGlobal
         };
 
