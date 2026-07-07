@@ -372,6 +372,7 @@
 
         function ajustar() {
             var w = cvs.parentElement.clientWidth;
+            if (w < 200) w = 200;
             cvs.width = w;
             c.strokeStyle = '#0d2b4e';
             c.lineWidth = 2.5;
@@ -435,7 +436,18 @@
 
     function canvasToJpeg(cvs, quality) {
         quality = quality || 0.85;
-        if (!cvs || !cvs.width || !cvs.height) return null;
+        if (!cvs || !cvs.width || !cvs.height) {
+            var tmp = document.createElement('canvas');
+            tmp.width = 200; tmp.height = 150;
+            var tc = tmp.getContext('2d');
+            tc.fillStyle = '#ffffff';
+            tc.fillRect(0, 0, 200, 150);
+            tc.fillStyle = '#aaaaaa';
+            tc.font = '14px sans-serif';
+            tc.textAlign = 'center';
+            tc.fillText('Firma no disponible', 100, 80);
+            return tmp.toDataURL('image/jpeg', quality);
+        }
         try {
             var ctx = cvs.getContext('2d');
             var src = ctx.getImageData(0, 0, cvs.width, cvs.height);
@@ -577,6 +589,7 @@
 
         function ajustarAnchoCanvas() {
             var width = canvas.parentElement.clientWidth;
+            if (width < 200) width = 200;
             canvas.width = width;
             ctx.strokeStyle = '#0d2b4e';
             ctx.lineWidth = 2.5;
@@ -1446,7 +1459,6 @@
                     var col = idx % cols;
                     var row = Math.floor(idx / cols);
                     var ix = ML + col * cellW + 10;
-                    var iy2 = iy - row * cellH + cellH - 20;
 
                     var imgW = imgObj.imgW;
                     var imgH = imgObj.imgH;
@@ -1456,8 +1468,11 @@
                     var dw = Math.round(imgW * sc);
                     var dh = Math.round(imgH * sc);
 
-                    content += 'q ' + dw + ' 0 0 ' + dh + ' ' + ix + ' ' + (iy2 - dh) + ' cm /Img' + imgObj.num + ' Do Q\n';
-                    content += 'BT /F1 7 Tf ' + ix + ' ' + (iy2 - dh - 12) + ' Td (' + escPdf(imgObj.caption.substring(0, 50)) + ') Tj ET\n';
+                    var cellTop = iy - row * cellH;
+                    var imgY = cellTop - 15 - dh;
+
+                    content += 'q ' + dw + ' 0 0 ' + dh + ' ' + ix + ' ' + imgY + ' cm /Img' + imgObj.num + ' Do Q\n';
+                    content += 'BT /F1 7 Tf ' + ix + ' ' + (imgY - 12) + ' Td (' + escPdf(imgObj.caption.substring(0, 50)) + ') Tj ET\n';
                 });
 
                 var contentEntry = newObj(true);
